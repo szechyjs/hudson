@@ -3,6 +3,9 @@
 function check_result {
   if [ "0" -ne "$?" ]
   then
+    (repo forall -c "git reset --hard") > /dev/null
+    rm -f .repo/local_manifest/dyn-*.xml
+    rm -f .repo/local_manifest/roomservice.xml
     echo $1
     exit 1
   fi
@@ -87,6 +90,8 @@ else
    JENKINS_BUILD_DIR=$REPO_BRANCH
 fi
 
+export JENKINS_BUILD_DIR
+
 mkdir -p $JENKINS_BUILD_DIR
 cd $JENKINS_BUILD_DIR
 
@@ -122,22 +127,46 @@ then
   . ~/.jenkins_profile
 fi
 
-cp $WORKSPACE/hudson/$REPO_BRANCH.xml .repo/local_manifest.xml
+mkdir -p .repo/local_manifests
+rm -f .repo/local_manifest.xml
+
+rm -rf $WORKSPACE/build_env
+git clone https://github.com/CyanogenMod/cm_build_config.git $WORKSPACE/build_env
+check_result "Bootstrap failed"
+
+if [ -f $WORKSPACE/build_env/bootstrap.sh ]
+then
+  bash $WORKSPACE/build_env/bootstrap.sh
+fi
+
+cp $WORKSPACE/build_env/$REPO_BRANCH.xml .repo/local_manifests/dyn-$REPO_BRANCH.xml
 
 echo Core Manifest:
 cat .repo/manifest.xml
 
-echo Local Manifest:
-cat .repo/local_manifest.xml
+rm -rf kernel/*
 
-echo Syncing...
-repo sync -d -c > /dev/null
-check_result "repo sync failed."
-echo Sync complete.
+if [ "$RELEASE_TYPE" = "CM_RELEASE" ]
+then
+  if [ -f $WORKSPACE/build_env/$REPO_BRANCH-release.xml ]
+  then
+    cp -f $WORKSPACE/build_env/$REPO_BRANCH-release.xml .repo/local_manifests/dyn-$REPO_BRANCH.xml
+  fi
+fi
+
+if [ -z "$SKIP_SYNC" ]
+then
+  echo Syncing...
+  repo sync -d -c > /dev/null
+  check_result "repo sync failed."
+  echo Sync complete.
+fi
 
 if [ -f $WORKSPACE/hudson/$REPO_BRANCH-setup.sh ]
 then
   $WORKSPACE/hudson/$REPO_BRANCH-setup.sh
+else
+  $WORKSPACE/hudson/cm-setup.sh
 fi
 
 if [ -f .last_branch ]
@@ -155,15 +184,36 @@ then
 fi
 
 . build/envsetup.sh
+if [ ! -z "$GERRIT_XLATION_LINT" ]
+then
+  LUNCH=$(echo $LUNCH@$DEVICEVENDOR | sed -f $WORKSPACE/hudson/shared-repo.map)
+fi
+
 lunch $LUNCH
 check_result "lunch failed."
 
 # save manifest used for build (saving revisions as current HEAD)
+
+# include only the auto-generated locals
+TEMPSTASH=$(mktemp -d)
+mv .repo/local_manifests/* $TEMPSTASH
+mv $TEMPSTASH/roomservice.xml .repo/local_manifests/
+
+# save it
 repo manifest -o $WORKSPACE/archive/manifest.xml -r
+
+# restore all local manifests
+mv $TEMPSTASH/* .repo/local_manifests/ 2>/dev/null
+rmdir $TEMPSTASH
 
 rm -f $OUT/cm-*.zip*
 
 UNAME=$(uname)
+
+if [ ! -z "$BUILD_USER_ID" ]
+then
+  export RELEASE_TYPE=CM_EXPERIMENTAL
+fi
 
 if [ "$RELEASE_TYPE" = "CM_NIGHTLY" ]
 then
@@ -213,7 +263,18 @@ then
   ccache -M 100G
 fi
 
+rm -f $WORKSPACE/changecount
 WORKSPACE=$WORKSPACE LUNCH=$LUNCH sh $WORKSPACE/hudson/changes/buildlog.sh 2>&1
+if [ -f $WORKSPACE/changecount ]
+then
+  CHANGE_COUNT=$(cat $WORKSPACE/changecount)
+  rm -rf $WORKSPACE/changecount
+  if [ $CHANGE_COUNT -eq "0" ]
+  then
+    echo "Zero changes since last build, aborting"
+    exit 1
+  fi
+fi
 
 LAST_CLEAN=0
 if [ -f .clean ]
@@ -228,7 +289,7 @@ if [ $TIME_SINCE_LAST_CLEAN -gt "24" -o $CLEAN = "true" ]
 then
   echo "Cleaning!"
   touch .clean
-  mka installclean
+  mka installclean #make clobber
 else
   echo "Skipping clean: $TIME_SINCE_LAST_CLEAN hours since last clean."
 fi
@@ -256,7 +317,17 @@ ZIP=$(ls $WORKSPACE/archive/cm-*.zip)
 unzip -p $ZIP system/build.prop > $WORKSPACE/archive/build.prop
 
 # CORE: save manifest used for build (saving revisions as current HEAD)
+rm -rf .repo/local_manifests/dyn-$REPO_BRANCH.xml
+rm -rf .repo/local_manifests/roomservice.xml
+
+# Stash away other possible manifests
+TEMPSTASH=$(mktemp -d)
+mv .repo/local_manifests $TEMPSTASH
+
 repo manifest -o $WORKSPACE/archive/core.xml -r
+
+mv $TEMPSTASH/local_manifests .repo
+rmdir $TEMPSTASH
 
 # chmod the files in case UMASK blocks permissions
 chmod -R ugo+r $WORKSPACE/archive
