@@ -4,11 +4,18 @@ function check_result {
   if [ "0" -ne "$?" ]
   then
     (repo forall -c "git reset --hard") > /dev/null
-    rm -f .repo/local_manifest/dyn-*.xml
-    rm -f .repo/local_manifest/roomservice.xml
     echo $1
     exit 1
   fi
+}
+
+function cleanup {
+    rm -f .repo/local_manifests/dyn-*.xml
+    rm -f .repo/local_manifests/roomservice.xml
+    if [ -f $WORKSPACE/build_env/cleanup.sh ]
+    then
+        bash $WORKSPACE/build_env/cleanup.sh
+    fi
 }
 
 if [ -z "$HOME" ]
@@ -51,6 +58,8 @@ if [ -z "$SYNC_PROTO" ]
 then
   SYNC_PROTO=http
 fi
+
+export PYTHONDONTWRITEBYTECODE=1
 
 # colorization fix in Jenkins
 export CL_RED="\"\033[31m\""
@@ -309,9 +318,10 @@ fi
 ZIP=$(ls $WORKSPACE/archive/cm-*.zip)
 unzip -p $ZIP system/build.prop > $WORKSPACE/archive/build.prop
 
+# Build is done, cleanup the environment
+cleanup
+
 # CORE: save manifest used for build (saving revisions as current HEAD)
-rm -rf .repo/local_manifests/dyn-$REPO_BRANCH.xml
-rm -rf .repo/local_manifests/roomservice.xml
 
 # Stash away other possible manifests
 TEMPSTASH=$(mktemp -d)
