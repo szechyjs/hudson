@@ -3,19 +3,19 @@
 function check_result {
   if [ "0" -ne "$?" ]
   then
-    (repo forall -c "git reset --hard") > /dev/null
+    (repo forall -c "git reset --hard") >/dev/null
     echo $1
     exit 1
   fi
 }
 
 function cleanup {
-    rm -f .repo/local_manifests/dyn-*.xml
-    rm -f .repo/local_manifests/roomservice.xml
-    if [ -f $WORKSPACE/build_env/cleanup.sh ]
-    then
-        bash $WORKSPACE/build_env/cleanup.sh
-    fi
+  rm -f .repo/local_manifests/dyn-*.xml
+  rm -f .repo/local_manifests/roomservice.xml
+  if [ -f $WORKSPACE/build_env/cleanup.sh ]
+  then
+    bash $WORKSPACE/build_env/cleanup.sh
+  fi
 }
 
 if [ -z "$HOME" ]
@@ -159,7 +159,7 @@ fi
 if [ -z "$SKIP_SYNC" ]
 then
   echo Syncing...
-  repo sync -d -c > /dev/null
+  repo sync -d -c -j4 > /dev/null
   check_result "repo sync failed."
   echo Sync complete.
 fi
@@ -266,11 +266,11 @@ then
 fi
 
 rm -f $WORKSPACE/changecount
-WORKSPACE=$WORKSPACE LUNCH=$LUNCH sh $WORKSPACE/hudson/changes/buildlog.sh 2>&1
+WORKSPACE=$WORKSPACE LUNCH=$LUNCH bash $WORKSPACE/hudson/changes/buildlog.sh 2>&1
 if [ -f $WORKSPACE/changecount ]
 then
   CHANGE_COUNT=$(cat $WORKSPACE/changecount)
-  rm -rf $WORKSPACE/changecount
+  rm -f $WORKSPACE/changecount
   if [ $CHANGE_COUNT -eq "0" ]
   then
     echo "Zero changes since last build, aborting"
